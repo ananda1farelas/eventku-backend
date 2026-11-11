@@ -32,3 +32,8 @@ go.work.sum
 # .idea/
 # .vscode/
 n.envnlogs/ncoverage*n*.outn*.bakn
+.env
+logs/
+coverage*
+*.out
+*.bak
