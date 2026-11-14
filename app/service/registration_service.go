@@ -12,12 +12,13 @@ import (
 )
 
 type RegistrationService struct {
-	regs *repository.RegistrationRepository
-	tx   *repository.TxManager
+	regs    *repository.RegistrationRepository
+	tickets *repository.TicketRepository
+	tx      *repository.TxManager
 }
 
-func NewRegistrationService(regs *repository.RegistrationRepository, tx *repository.TxManager) *RegistrationService {
-	return &RegistrationService{regs: regs, tx: tx}
+func NewRegistrationService(regs *repository.RegistrationRepository, tickets *repository.TicketRepository, tx *repository.TxManager) *RegistrationService {
+	return &RegistrationService{regs: regs, tickets: tickets, tx: tx}
 }
 
 func (s *RegistrationService) register(ctx context.Context, userID, eventID uuid.UUID) (*model.Registration, error) {
@@ -45,26 +46,32 @@ func (s *RegistrationService) register(ctx context.Context, userID, eventID uuid
 
 		status := DecideStatus(info.Quota, info.RegisteredCount)
 
-		// Pernah batal: pakai baris lama (UNIQUE event_id + user_id).
+		var reg *model.Registration
 		if existing != nil {
+			// Pernah batal: pakai baris lama (UNIQUE event_id + user_id).
 			if err := regs.Reactivate(ctx, existing, status); err != nil {
 				return err
 			}
-			result = existing
-			return nil
+			reg = existing
+		} else {
+			reg = &model.Registration{EventID: eventID, UserID: userID, Status: status}
+			if err := regs.Create(ctx, reg); err != nil {
+				return err
+			}
 		}
 
-		reg := &model.Registration{EventID: eventID, UserID: userID, Status: status}
-		if err := regs.Create(ctx, reg); err != nil {
-			return err
+		if reg.Status == model.RegistrationStatusRegistered {
+			if err := issueTicket(ctx, s.tickets.WithTx(db), reg.ID); err != nil {
+				return err
+			}
 		}
+
 		result = reg
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
-
 	return result, nil
 }
 
@@ -86,6 +93,8 @@ func (s *RegistrationService) cancel(ctx context.Context, userID, registrationID
 			return err
 		}
 
+		// Baca ulang dengan kunci: status bisa saja sudah berubah sejak
+		// intipan tadi (misal klik batal dua kali bersamaan).
 		reg, err := regs.FindByIDForUpdate(ctx, registrationID)
 		if err != nil {
 			return err
@@ -107,8 +116,9 @@ func (s *RegistrationService) cancel(ctx context.Context, userID, registrationID
 				if err := regs.SetStatus(ctx, next.ID, model.RegistrationStatusRegistered); err != nil {
 					return err
 				}
-				// TODO(ticket): terbitkan tiket QR untuk next
-				// (ditambahkan di branch feat/ticket-qr).
+				if err := issueTicket(ctx, s.tickets.WithTx(db), next.ID); err != nil {
+					return err
+				}
 			case errors.Is(err, repository.ErrNotFound):
 				// Waitlist kosong, tidak ada yang perlu dipromosikan.
 			default:
