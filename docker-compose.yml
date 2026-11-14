@@ -1,0 +1,49 @@
+services:
+  api:
+    build: .
+    image: eventku:local
+    restart: unless-stopped
+    environment:
+      APP_NAME: EventKu
+      APP_ENV: development
+      APP_PORT: "3000"
+      DB_HOST: postgres         
+      DB_PORT: "5432"
+      DB_USER: postgres
+      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD wajib diisi di .env}
+      DB_NAME: eventku
+      DB_SSLMODE: disable
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET wajib diisi di .env}
+      JWT_ACCESS_EXPIRY_MINUTES: "15"
+      JWT_REFRESH_EXPIRY_DAYS: "7"
+      LOG_LEVEL: info
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8080:3000"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:3000/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD wajib diisi di .env}
+      POSTGRES_DB: eventku
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d eventku"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:
