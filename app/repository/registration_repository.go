@@ -111,3 +111,66 @@ func scanRegistration(row interface{ Scan(dest ...any) error }) (*model.Registra
 	}
 	return &reg, nil
 }
+
+func (r *RegistrationRepository) Create(ctx context.Context, reg *model.Registration) error {
+	query := `
+		INSERT INTO registrations (event_id, user_id, status)
+		VALUES ($1, $2, $3)
+		RETURNING id, queued_at, created_at, updated_at`
+
+	err := r.db.QueryRow(ctx, query, reg.EventID, reg.UserID, reg.Status).
+		Scan(&reg.ID, &reg.QueuedAt, &reg.CreatedAt, &reg.UpdatedAt)
+	if err != nil {
+		if isUniqueViolation(err, "registrations_event_user_key") {
+			return ErrRegistrationExists
+		}
+		return fmt.Errorf("create registration: %w", err)
+	}
+	return nil
+}
+
+func (r *RegistrationRepository) Reactivate(ctx context.Context, reg *model.Registration, status string) error {
+	query := `
+		UPDATE registrations
+		SET status = $2, queued_at = now(), updated_at = now()
+		WHERE id = $1
+		RETURNING queued_at, updated_at`
+
+	err := r.db.QueryRow(ctx, query, reg.ID, status).Scan(&reg.QueuedAt, &reg.UpdatedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		return fmt.Errorf("reactivate registration: %w", err)
+	}
+	reg.Status = status
+	return nil
+}
+
+func (r *RegistrationRepository) SetStatus(ctx context.Context, id uuid.UUID, status string) error {
+	query := `UPDATE registrations SET status = $2, updated_at = now() WHERE id = $1`
+
+	tag, err := r.db.Exec(ctx, query, id, status)
+	if err != nil {
+		return fmt.Errorf("set registration status: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// FindOldestWaitlistForUpdate mengambil (dan mengunci) antrean waitlist
+// paling depan di sebuah event: queued_at paling lama, id sebagai
+// pemutus kalau waktunya persis sama. Balikin ErrNotFound kalau waitlist
+// kosong, artinya tidak ada yang perlu dipromosikan.
+func (r *RegistrationRepository) FindOldestWaitlistForUpdate(ctx context.Context, eventID uuid.UUID) (*model.Registration, error) {
+	query := `SELECT ` + registrationColumns + `
+		FROM registrations
+		WHERE event_id = $1 AND status = $2
+		ORDER BY queued_at ASC, id ASC
+		LIMIT 1
+		FOR UPDATE`
+
+	return scanRegistration(r.db.QueryRow(ctx, query, eventID, model.RegistrationStatusWaitlist))
+}
