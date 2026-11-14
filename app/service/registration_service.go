@@ -67,3 +67,65 @@ func (s *RegistrationService) register(ctx context.Context, userID, eventID uuid
 
 	return result, nil
 }
+
+func (s *RegistrationService) cancel(ctx context.Context, userID, registrationID uuid.UUID) (*model.Registration, error) {
+	var result *model.Registration
+
+	err := s.tx.WithTx(ctx, func(db repository.DBTX) error {
+		regs := s.regs.WithTx(db)
+
+		peek, err := regs.FindByID(ctx, registrationID)
+		if err != nil {
+			return err
+		}
+		if err := CanCancel(peek, userID); err != nil {
+			return err
+		}
+
+		if _, err := regs.LockEventInfo(ctx, peek.EventID); err != nil {
+			return err
+		}
+
+		reg, err := regs.FindByIDForUpdate(ctx, registrationID)
+		if err != nil {
+			return err
+		}
+		if err := CanCancel(reg, userID); err != nil {
+			return err
+		}
+
+		previousStatus := reg.Status
+		if err := regs.SetStatus(ctx, reg.ID, model.RegistrationStatusCancelled); err != nil {
+			return err
+		}
+		reg.Status = model.RegistrationStatusCancelled
+
+		if ShouldPromoteWaitlist(previousStatus) {
+			next, err := regs.FindOldestWaitlistForUpdate(ctx, reg.EventID)
+			switch {
+			case err == nil:
+				if err := regs.SetStatus(ctx, next.ID, model.RegistrationStatusRegistered); err != nil {
+					return err
+				}
+				// TODO(ticket): terbitkan tiket QR untuk next
+				// (ditambahkan di branch feat/ticket-qr).
+			case errors.Is(err, repository.ErrNotFound):
+				// Waitlist kosong, tidak ada yang perlu dipromosikan.
+			default:
+				return err
+			}
+		}
+
+		result = reg
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// listMine untuk GET /me/registrations.
+func (s *RegistrationService) listMine(ctx context.Context, userID uuid.UUID) ([]model.Registration, error) {
+	return s.regs.ListByUser(ctx, userID)
+}
