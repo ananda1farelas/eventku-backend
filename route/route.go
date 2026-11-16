@@ -2,22 +2,32 @@ package route
 
 import (
 	"github.com/gofiber/fiber/v2"
-	"github.com/jackc/pgx/v5/pgxpool"
+
+	"eventku/app/service"
 )
 
-// RegisterRoutes jadi satu pintu pendaftaran semua route.
-// Supaya main.go dan file ini tidak sering bentrok pas merge, tiap modul
-// (auth, event, dll) bikin file route/<modul>_route.go sendiri dengan satu
-// fungsi RegisterXxxRoutes, lalu dipanggil satu baris di sini.
-func RegisterRoutes(app *fiber.App, pool *pgxpool.Pool) {
+// RegisterRoutes jadi satu pintu pendaftaran semua route. `protect` dioper
+// sebagai fiber.Handler yang SUDAH JADI (dibangun di config.SetupApp),
+// supaya route tidak perlu meng-import config untuk dapat *config.Config —
+// sesuai aturan import: route hanya boleh import app/service, middleware,
+// helper.
+func RegisterRoutes(
+	app *fiber.App,
+	authService *service.AuthService,
+	orgService *service.OrganizationService,
+	rbacService *service.RBACService,
+	protect fiber.Handler,
+) {
 	app.Get("/health", healthCheck)
 
-	// RegisterAuthRoutes(app, pool)
-	// RegisterOrganizationRoutes(app, pool)
-	// RegisterEventRoutes(app, pool)
-	// RegisterRegistrationRoutes(app, pool)
-	// RegisterTicketRoutes(app, pool)
-	// RegisterCheckinRoutes(app, pool)
+	RegisterAuthRoutes(app, authService, protect)
+	RegisterOrganizationRoutes(app, orgService, protect)
+
+	// RegisterEventRoutes(app, eventService, protect, rbacService)
+	// RegisterRegistrationRoutes(app, registrationService, protect)
+	// RegisterTicketRoutes(app, ticketService, protect)
+	// RegisterCheckinRoutes(app, checkinService, protect)
+	_ = rbacService // dipakai begitu RegisterEventRoutes (Orang 2) di-uncomment
 }
 
 func healthCheck(c *fiber.Ctx) error {
