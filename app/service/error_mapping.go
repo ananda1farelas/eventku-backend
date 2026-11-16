@@ -16,6 +16,7 @@ func RegisterErrorMappings() {
 		http.StatusConflict: {
 			repository.ErrDuplicateEmail, repository.ErrRegistrationExists,
 			repository.ErrCheckinExists, repository.ErrTicketExists,
+			repository.ErrAlreadyMember, // <-- tambah ini
 			ErrRegistrationEventNotOpen, ErrRegistrationDeadlinePassed,
 			ErrAlreadyRegistered, ErrRegistrationAlreadyCancelled,
 			ErrCheckinTicketInvalid, ErrAlreadyCheckedIn,
@@ -23,6 +24,7 @@ func RegisterErrorMappings() {
 		http.StatusUnprocessableEntity: {
 			ErrPasswordTooWeak, ErrInvalidEmailFormat, ErrFullNameTooShort,
 			ErrCheckinQRRequired,
+			ErrOrganizationNameTooShort, ErrInvalidMemberPosition, // <-- tambah ini
 		},
 		http.StatusUnauthorized: {
 			ErrInvalidCredentials, ErrRefreshTokenExpired,
@@ -30,6 +32,7 @@ func RegisterErrorMappings() {
 		},
 		http.StatusForbidden: {
 			ErrAccountInactive, ErrRegistrationForbidden, ErrCheckinForbidden,
+			ErrNotOrganizationMember, ErrNotOrganizationOwner, // <-- tambah ini
 		},
 	}
 	for code, errs := range table {
