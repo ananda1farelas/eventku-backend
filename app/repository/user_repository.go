@@ -13,9 +13,6 @@ import (
 )
 
 // ErrNotFound dibalikin repo kalau query SELECT gak nemu baris apapun.
-// Service yang nentuin ini mau diterjemahin jadi error HTTP apa
-// (biasanya 404, tapi di login/register sengaja ditangani beda, lihat
-// service/auth_service.go).
 var ErrNotFound = errors.New("data tidak ditemukan")
 
 // ErrDuplicateEmail dibalikin repo kalau INSERT users kena unique
@@ -88,6 +85,27 @@ func (r *UserRepository) FindRoleIDByName(ctx context.Context, name string) (uui
 		return uuid.Nil, fmt.Errorf("find role by name: %w", err)
 	}
 	return id, nil
+}
+
+// HasPermission dipakai RBACService.Can: cek apakah role tertentu (by name,
+// sama seperti yang ada di JWT claims) punya permission tertentu (by name,
+// misal "events.moderate"). Cuma EXISTS check, gak peduli detail lain.
+func (r *UserRepository) HasPermission(ctx context.Context, roleName, permissionName string) (bool, error) {
+	var exists bool
+	err := r.db.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM role_permissions rp
+			JOIN roles r ON r.id = rp.role_id
+			JOIN permissions p ON p.id = rp.permission_id
+			WHERE r.name = $1 AND p.name = $2
+		)`,
+		roleName, permissionName,
+	).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("cek permission: %w", err)
+	}
+	return exists, nil
 }
 
 func (r *UserRepository) scanUser(row pgx.Row) (*model.User, error) {
