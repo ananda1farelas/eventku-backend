@@ -19,9 +19,6 @@ import (
 )
 
 // AuthService isi semua use-case auth: register, login, refresh, me.
-// Validasi "bentuk" input (format, kekuatan password) sudah selesai di
-// auth_rules.go sebelum method di sini dipanggil — service fokus ke
-// orkestrasi: hash password, generate token, baca/tulis repo.
 type AuthService struct {
 	userRepo         *repository.UserRepository
 	refreshTokenRepo *repository.RefreshTokenRepository
@@ -36,20 +33,21 @@ func NewAuthService(userRepo *repository.UserRepository, refreshTokenRepo *repos
 	}
 }
 
-// jwtClaims adalah isi payload access token. RoleName diselipin di sini
-// (bukan cuma UserID) supaya middleware bisa langsung tau role tanpa query
-// DB tiap request yang gak butuh data user lengkap.
+// jwtClaims adalah isi payload access token.
 type jwtClaims struct {
 	UserID string `json:"user_id"`
 	Role   string `json:"role"`
 	jwt.RegisteredClaims
 }
 
-// Register memvalidasi (lewat ValidateRegisterInput di pemanggil/handler,
-// sudah dipastikan lolos sebelum sampai sini), hash password dengan bcrypt,
-// lalu simpan user baru dengan role default "user" — TIDAK ADA jalur publik
-// untuk daftar jadi admin.
+// Register memvalidasi rule bisnis (ValidateRegisterInput), hash password
+// dengan bcrypt, lalu simpan user baru dengan role default "user" — TIDAK
+// ADA jalur publik untuk daftar jadi admin.
 func (s *AuthService) Register(ctx context.Context, fullName, email, password string) (*model.AuthResponse, error) {
+	if err := ValidateRegisterInput(fullName, email, password); err != nil {
+		return nil, err
+	}
+
 	email = NormalizeEmail(email)
 
 	roleID, err := s.userRepo.FindRoleIDByName(ctx, model.RoleUser)
@@ -70,16 +68,14 @@ func (s *AuthService) Register(ctx context.Context, fullName, email, password st
 	}
 
 	if err := s.userRepo.Create(ctx, user); err != nil {
-		return nil, err // bisa ErrDuplicateEmail, biar handler yang terjemahin ke 409
+		return nil, err
 	}
 	user.RoleName = model.RoleUser
 
 	return s.issueTokenPair(ctx, user)
 }
 
-// Login verifikasi email+password. Pesan error SENGAJA sama persis
-// (ErrInvalidCredentials) baik email gak ketemu maupun password salah,
-// supaya gak jadi celah buat enumerasi "email mana yang terdaftar".
+// Login verifikasi email+password.
 func (s *AuthService) Login(ctx context.Context, email, password string) (*model.AuthResponse, error) {
 	email = NormalizeEmail(email)
 
@@ -102,10 +98,7 @@ func (s *AuthService) Login(ctx context.Context, email, password string) (*model
 	return s.issueTokenPair(ctx, user)
 }
 
-// Refresh melakukan token rotation: refresh token lama divalidasi lalu
-// DIREVOKE, dan sepasang token baru (access+refresh) diterbitkan. Kalau
-// refresh token yang sama dipakai dua kali, percobaan kedua akan gagal
-// karena sudah revoked — tanda kemungkinan token itu bocor.
+// Refresh melakukan token rotation.
 func (s *AuthService) Refresh(ctx context.Context, rawRefreshToken string) (*model.AuthResponse, error) {
 	hash := hashToken(rawRefreshToken)
 
@@ -143,9 +136,6 @@ func (s *AuthService) Me(ctx context.Context, userID uuid.UUID) (*model.MeRespon
 	return model.NewMeResponse(user), nil
 }
 
-// issueTokenPair bikin access token (JWT, short-lived) dan refresh token
-// (random string, long-lived, disimpan dalam bentuk hash) sekaligus,
-// dipakai bareng oleh Register/Login/Refresh biar format response konsisten.
 func (s *AuthService) issueTokenPair(ctx context.Context, user *model.User) (*model.AuthResponse, error) {
 	accessToken, expiresIn, err := s.generateAccessToken(user)
 	if err != nil {
@@ -192,9 +182,6 @@ func (s *AuthService) generateAccessToken(user *model.User) (string, int, error)
 	return signed, int(expiry.Seconds()), nil
 }
 
-// generateRandomToken bikin refresh token mentah dari random bytes
-// (bukan JWT), karena refresh token gak perlu bisa "dibaca" isinya —
-// cukup unik, panjang, dan susah ditebak.
 func generateRandomToken(numBytes int) (string, error) {
 	b := make([]byte, numBytes)
 	if _, err := rand.Read(b); err != nil {
@@ -203,9 +190,6 @@ func generateRandomToken(numBytes int) (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
-// hashToken nge-hash refresh token mentah pakai SHA-256 sebelum
-// disimpan/dicari di DB. Beda dengan bcrypt buat password: refresh token
-// sudah random & panjang, jadi gak butuh salt+cost factor, cukup hash cepat.
 func hashToken(raw string) string {
 	sum := sha256.Sum256([]byte(raw))
 	return hex.EncodeToString(sum[:])
